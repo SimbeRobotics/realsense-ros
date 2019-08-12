@@ -106,7 +106,7 @@ BaseRealSenseNode::BaseRealSenseNode(ros::NodeHandle& nodeHandle,
     _image_format[RS2_STREAM_COLOR] = CV_8UC3;    // CVBridge type
     _encoding[RS2_STREAM_COLOR] = sensor_msgs::image_encodings::RGB8; // ROS message type
     _unit_step_size[RS2_STREAM_COLOR] = 3; // sensor_msgs::ImagePtr row step size
-    _stream_name[RS2_STREAM_COLOR] = "color";
+    _stream_name[RS2_STREAM_COLOR] = "rgb";
     _depth_aligned_encoding[RS2_STREAM_COLOR] = sensor_msgs::image_encodings::TYPE_16UC1;
 
     // Types for fisheye stream
@@ -760,7 +760,7 @@ void BaseRealSenseNode::setupPublishers()
                 rectified_image = true;
 
             std::string stream_name(STREAM_NAME(stream));
-            image_raw << stream_name << "/image_" << ((rectified_image)?"rect_":"") << "raw";
+            image_raw << stream_name << "/image_raw";// << ((rectified_image)?"rect_":"") << "raw";
             camera_info << stream_name << "/camera_info";
 
             std::shared_ptr<FrequencyDiagnostics> frequency_diagnostics(new FrequencyDiagnostics(_fps[stream], stream_name, _serial_no));
