@@ -15,6 +15,8 @@ using namespace ddynamic_reconfigure;
 #define OPTICAL_FRAME_ID(sip) (static_cast<std::ostringstream&&>(std::ostringstream() << "camera_" << STREAM_NAME(sip) << "_optical_frame")).str()
 #define ALIGNED_DEPTH_TO_FRAME_ID(sip) (static_cast<std::ostringstream&&>(std::ostringstream() << "camera_aligned_depth_to_" << STREAM_NAME(sip) << "_frame")).str()
 
+#define DKMS false
+
 SyncedImuPublisher::SyncedImuPublisher(ros::Publisher imu_publisher, std::size_t waiting_list_size):
             _publisher(imu_publisher), _pause_mode(false),
             _waiting_list_size(waiting_list_size)
@@ -1138,17 +1140,31 @@ void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync
     {
         auto stream = frame.get_profile().stream_type();
         auto stream_index = (stream == GYRO.first)?GYRO:ACCEL;
-        double frame_time = frame.get_timestamp();
 
         bool placeholder_false(false);
-        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
-        {
-            setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
-        }
-
+        double elapsed_camera_ms;
         seq += 1;
-        double elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
+        if(DKMS)
+        {
+            double frame_time = frame.get_timestamp();
 
+            if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+            {
+                setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+            }
+
+            elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
+        }
+        else
+        {
+            if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+            {
+              setBaseTime(0, true);
+            }
+
+            //I am fairly certain elapsed_camera_ms is in seconds and not ms.
+            elapsed_camera_ms = (ros::Time::now() - _ros_time_base).toSec();
+        }
         if (0 != _synced_imu_publisher->getNumSubscribers())
         {
             auto crnt_reading = *(reinterpret_cast<const float3*>(frame.get_data()));
@@ -1204,25 +1220,47 @@ void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync
 void BaseRealSenseNode::imu_callback(rs2::frame frame)
 {
     auto stream = frame.get_profile().stream_type();
-    double frame_time = frame.get_timestamp();
-    bool placeholder_false(false);
-    if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
-    {
-        setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
-    }
-
-    ROS_DEBUG("Frame arrived: stream: %s ; index: %d ; Timestamp Domain: %s",
-                rs2_stream_to_string(frame.get_profile().stream_type()),
-                frame.get_profile().stream_index(),
-                rs2_timestamp_domain_to_string(frame.get_frame_timestamp_domain()));
-
     auto stream_index = (stream == GYRO.first)?GYRO:ACCEL;
+    double elapsed_camera_ms;
+    ros::Time t;
+
+    bool placeholder_false(false);
+    if(DKMS)
+    {
+        double frame_time = frame.get_timestamp();
+        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+        {
+            setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+        }
+
+        ROS_DEBUG("Frame arrived: stream: %s ; index: %d ; Timestamp Domain: %s",
+                    rs2_stream_to_string(frame.get_profile().stream_type()),
+                    frame.get_profile().stream_index(),
+                    rs2_timestamp_domain_to_string(frame.get_frame_timestamp_domain()));
+
+        if (0 != _info_publisher[stream_index].getNumSubscribers() ||
+            0 != _imu_publishers[stream_index].getNumSubscribers())
+        {
+            elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
+            t = ros::Time(_ros_time_base.toSec() + elapsed_camera_ms);
+        }
+    }
+    else
+    {
+        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+        {
+          setBaseTime(0, true);
+        }
+        if (0 != _info_publisher[stream_index].getNumSubscribers() ||
+            0 != _imu_publishers[stream_index].getNumSubscribers())
+          {
+            elapsed_camera_ms = (ros::Time::now() - _ros_time_base).toSec();
+            t = ros::Time(_ros_time_base.toSec() + elapsed_camera_ms);
+          }
+    }
     if (0 != _info_publisher[stream_index].getNumSubscribers() ||
         0 != _imu_publishers[stream_index].getNumSubscribers())
     {
-        double elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
-        ros::Time t(_ros_time_base.toSec() + elapsed_camera_ms);
-
         auto imu_msg = sensor_msgs::Imu();
         imu_msg.header.frame_id = _optical_frame_id[stream_index];
         imu_msg.orientation.x = 0.0;
@@ -1256,20 +1294,28 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
 
 void BaseRealSenseNode::pose_callback(rs2::frame frame)
 {
-    double frame_time = frame.get_timestamp();
-    bool placeholder_false(false);
-    if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+    double elapsed_camera_ms;
+    if(DKMS)
     {
-        setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
-    }
+        double frame_time = frame.get_timestamp();
+        bool placeholder_false(false);
+        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+        {
+            setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+        }
 
-    ROS_DEBUG("Frame arrived: stream: %s ; index: %d ; Timestamp Domain: %s",
-                rs2_stream_to_string(frame.get_profile().stream_type()),
-                frame.get_profile().stream_index(),
-                rs2_timestamp_domain_to_string(frame.get_frame_timestamp_domain()));
+        ROS_DEBUG("Frame arrived: stream: %s ; index: %d ; Timestamp Domain: %s",
+                    rs2_stream_to_string(frame.get_profile().stream_type()),
+                    frame.get_profile().stream_index(),
+                    rs2_timestamp_domain_to_string(frame.get_frame_timestamp_domain()));
+        elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
+    }
+    else
+    {
+      elapsed_camera_ms = (ros::Time::now() - _ros_time_base).toSec();
+    }
     const auto& stream_index(POSE);
     rs2_pose pose = frame.as<rs2::pose_frame>().get_pose_data();
-    double elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
     ros::Time t(_ros_time_base.toSec() + elapsed_camera_ms);
 
     geometry_msgs::PoseStamped pose_msg;
@@ -1310,7 +1356,7 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
         tf::Quaternion q(-msg.transform.rotation.x,-msg.transform.rotation.y,-msg.transform.rotation.z,msg.transform.rotation.w);
         tfv=tf::quatRotate(q,tfv);
         tf::vector3TFToMsg(tfv,v_msg.vector);
-	
+
         geometry_msgs::Vector3Stamped om_msg;
         om_msg.vector.x = -pose.angular_velocity.z;
         om_msg.vector.y = -pose.angular_velocity.x;
@@ -1318,7 +1364,7 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
         tf::vector3MsgToTF(om_msg.vector,tfv);
         tfv=tf::quatRotate(q,tfv);
         tf::vector3TFToMsg(tfv,om_msg.vector);
-	
+
 
         nav_msgs::Odometry odom_msg;
         _seq[stream_index] += 1;
@@ -1350,27 +1396,32 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
 void BaseRealSenseNode::frame_callback(rs2::frame frame)
 {
     _synced_imu_publisher->Pause();
-    
     try{
-        double frame_time = frame.get_timestamp();
-
-        // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
-        // and the incremental timestamp from the camera.
-        // In sync mode the timestamp is based on ROS time
-        bool placeholder_false(false);
-        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
-        {
-            setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
-        }
-
         ros::Time t;
-        if (_sync_frames)
-        {
-            t = ros::Time::now();
+        if(DKMS){
+            double frame_time = frame.get_timestamp();
+
+            // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
+            // and the incremental timestamp from the camera.
+            // In sync mode the timestamp is based on ROS time
+            bool placeholder_false(false);
+            if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+            {
+                setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+            }
+
+            if (_sync_frames)
+            {
+                t = ros::Time::now();
+            }
+            else
+            {
+                t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+            }
         }
         else
         {
-            t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+          t = ros::Time::now();
         }
 
         if (frame.is<rs2::frameset>())
@@ -1387,8 +1438,11 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 auto stream_format = f.get_profile().format();
                 auto stream_unique_id = f.get_profile().unique_id();
 
-                ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), frame_time, t.toNSec());
+                //ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                //            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), frame_time, t.toNSec());
+                ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: N/A ; ros_TS(NSec): %lu",
+                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), t.toNSec());
+
             }
             // Clip depth_frame for max range:
             rs2::depth_frame depth_frame = frameset.get_depth_frame();
@@ -1413,8 +1467,11 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 auto stream_format = f.get_profile().format();
                 auto stream_unique_id = f.get_profile().unique_id();
 
-                ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), frame_time, t.toNSec());
+                //ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                //            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), frame_time, t.toNSec());
+                ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: N/A ; ros_TS(NSec): %lu",
+                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), t.toNSec());
+
             }
             ROS_DEBUG("END OF LIST");
             ROS_DEBUG_STREAM("Remove streams with same type and index:");
@@ -1462,8 +1519,10 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 auto stream_index = f.get_profile().stream_index();
                 auto stream_format = f.get_profile().format();
 
-                ROS_DEBUG("Frameset contain (%s, %d, %s) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), frame.get_frame_number(), frame_time, t.toNSec());
+                //ROS_DEBUG("Frameset contain (%s, %d, %s) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                //            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), frame.get_frame_number(), frame_time, t.toNSec());
+                ROS_DEBUG("Frameset contain (%s, %d, %s) frame. frame_number: %llu ; frame_TS: N/A ; ros_TS(NSec): %lu",
+                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), frame.get_frame_number(), t.toNSec());
 
                 if (f.is<rs2::points>())
                 {
@@ -1494,8 +1553,8 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         {
             auto stream_type = frame.get_profile().stream_type();
             auto stream_index = frame.get_profile().stream_index();
-            ROS_DEBUG("Single video frame arrived (%s, %d). frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                        rs2_stream_to_string(stream_type), stream_index, frame.get_frame_number(), frame_time, t.toNSec());
+            //ROS_DEBUG("Single video frame arrived (%s, %d). frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+            //            rs2_stream_to_string(stream_type), stream_index, frame.get_frame_number(), frame_time, t.toNSec());
 
             stream_index_pair sip{stream_type,stream_index};
             if (frame.is<rs2::depth_frame>())
