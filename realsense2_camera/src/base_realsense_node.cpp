@@ -16,6 +16,7 @@ using namespace ddynamic_reconfigure;
 #define ALIGNED_DEPTH_TO_FRAME_ID(sip) (static_cast<std::ostringstream&&>(std::ostringstream() << "camera_aligned_depth_to_" << STREAM_NAME(sip) << "_frame")).str()
 
 #define DKMS false
+#define DKMS_DEBUG true
 
 SyncedImuPublisher::SyncedImuPublisher(ros::Publisher imu_publisher, std::size_t waiting_list_size):
             _publisher(imu_publisher), _pause_mode(false),
@@ -649,9 +650,9 @@ void BaseRealSenseNode::setupPublishers()
         if (_enable[stream])
         {
             std::stringstream image_raw, camera_info;
-            bool rectified_image = false;
-            if (stream == DEPTH || stream == INFRA1 || stream == INFRA2)
-                rectified_image = true;
+            //bool rectified_image = false;
+            //if (stream == DEPTH || stream == INFRA1 || stream == INFRA2)
+            //    rectified_image = true;
 
             std::string stream_name(STREAM_NAME(stream));
             image_raw << stream_name << "/image_raw";// << ((rectified_image)?"rect_":"") << "raw";
@@ -1144,7 +1145,7 @@ void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync
         bool placeholder_false(false);
         double elapsed_camera_ms;
         seq += 1;
-        if(DKMS)
+        if(DKMS || DKMS_DEBUG)
         {
             double frame_time = frame.get_timestamp();
 
@@ -1155,15 +1156,17 @@ void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync
 
             elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
         }
-        else
+        if(!DKMS || DKMS_DEBUG)
         {
             if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
             {
-              setBaseTime(0, true);
+              setBaseTime(0, false);
             }
 
+            double elapsed_ros_ms = (ros::Time::now() - _ros_time_base).toSec();
+            ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", elapsed_ros_ms - elapsed_camera_ms);
             //I am fairly certain elapsed_camera_ms is in seconds and not ms.
-            elapsed_camera_ms = (ros::Time::now() - _ros_time_base).toSec();
+            elapsed_camera_ms = elapsed_ros_ms;
         }
         if (0 != _synced_imu_publisher->getNumSubscribers())
         {
@@ -1225,7 +1228,7 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
     ros::Time t;
 
     bool placeholder_false(false);
-    if(DKMS)
+    if(DKMS || DKMS_DEBUG)
     {
         double frame_time = frame.get_timestamp();
         if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
@@ -1245,16 +1248,19 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
             t = ros::Time(_ros_time_base.toSec() + elapsed_camera_ms);
         }
     }
-    else
+    if(!DKMS || DKMS_DEBUG)
     {
         if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
         {
-          setBaseTime(0, true);
+          setBaseTime(0, false);
         }
         if (0 != _info_publisher[stream_index].getNumSubscribers() ||
             0 != _imu_publishers[stream_index].getNumSubscribers())
           {
-            elapsed_camera_ms = (ros::Time::now() - _ros_time_base).toSec();
+            double elapsed_ros_ms = (ros::Time::now() - _ros_time_base).toSec();
+            ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", elapsed_ros_ms - elapsed_camera_ms);
+            //I am fairly certain elapsed_camera_ms is in seconds and not ms.
+            elapsed_camera_ms = elapsed_ros_ms;
             t = ros::Time(_ros_time_base.toSec() + elapsed_camera_ms);
           }
     }
@@ -1295,7 +1301,7 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
 void BaseRealSenseNode::pose_callback(rs2::frame frame)
 {
     double elapsed_camera_ms;
-    if(DKMS)
+    if(DKMS || DKMS_DEBUG)
     {
         double frame_time = frame.get_timestamp();
         bool placeholder_false(false);
@@ -1310,9 +1316,12 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
                     rs2_timestamp_domain_to_string(frame.get_frame_timestamp_domain()));
         elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
     }
-    else
+    if(!DKMS || DKMS_DEBUG)
     {
-      elapsed_camera_ms = (ros::Time::now() - _ros_time_base).toSec();
+        double elapsed_ros_ms = (ros::Time::now() - _ros_time_base).toSec();
+        ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", elapsed_ros_ms - elapsed_camera_ms);
+        //I am fairly certain elapsed_camera_ms is in seconds and not ms.
+        elapsed_camera_ms = elapsed_ros_ms;
     }
     const auto& stream_index(POSE);
     rs2_pose pose = frame.as<rs2::pose_frame>().get_pose_data();
@@ -1398,7 +1407,8 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
     _synced_imu_publisher->Pause();
     try{
         ros::Time t;
-        if(DKMS){
+        double elapsed_camera_ms;
+        if(DKMS || DKMS_DEBUG){
             double frame_time = frame.get_timestamp();
 
             // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
@@ -1419,8 +1429,10 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame_time - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
             }
         }
-        else
+        if(!DKMS || DKMS_DEBUG)
         {
+
+          ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", (ros::Time::now() - t).toSec());
           t = ros::Time::now();
         }
 
@@ -1602,6 +1614,7 @@ void BaseRealSenseNode::setBaseTime(double frame_time, bool warn_no_metadata)
 {
     ROS_WARN_COND(warn_no_metadata, "Frame metadata isn't available! (frame_timestamp_domain = RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME)");
 
+    ROS_WARN("SETTING BASE TIME");
     _ros_time_base = ros::Time::now();
     _camera_time_base = frame_time;
 }
