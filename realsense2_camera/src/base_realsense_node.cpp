@@ -16,7 +16,7 @@ using namespace ddynamic_reconfigure;
 #define ALIGNED_DEPTH_TO_FRAME_ID(sip) (static_cast<std::ostringstream&&>(std::ostringstream() << "camera_aligned_depth_to_" << STREAM_NAME(sip) << "_frame")).str()
 
 #define DKMS false
-#define DKMS_DEBUG true
+#define DKMS_DEBUG false
 
 SyncedImuPublisher::SyncedImuPublisher(ros::Publisher imu_publisher, std::size_t waiting_list_size):
             _publisher(imu_publisher), _pause_mode(false),
@@ -425,15 +425,19 @@ void BaseRealSenseNode::getParameters()
     for (auto& stream : IMAGE_STREAMS)
     {
         std::string param_name(_stream_name[stream.first] + "_width");
+        ROS_INFO("%s", param_name.c_str());
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _width[stream], IMAGE_WIDTH);
         param_name = _stream_name[stream.first] + "_height";
+        ROS_INFO("%s", param_name.c_str());
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _height[stream], IMAGE_HEIGHT);
         param_name = _stream_name[stream.first] + "_fps";
+        ROS_INFO("%s", param_name.c_str());
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _fps[stream], IMAGE_FPS);
         param_name = "enable_" + STREAM_NAME(stream);
+        ROS_INFO("%s", param_name.c_str());
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _enable[stream], true);
     }
@@ -441,9 +445,11 @@ void BaseRealSenseNode::getParameters()
     for (auto& stream : HID_STREAMS)
     {
         std::string param_name(_stream_name[stream.first] + "_fps");
+        ROS_INFO("%s", param_name.c_str());
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _fps[stream], IMU_FPS);
         param_name = "enable_" + STREAM_NAME(stream);
+        ROS_INFO("%s", param_name.c_str());
         _pnh.param(param_name, _enable[stream], ENABLE_IMU);
         ROS_DEBUG_STREAM("_enable[" << _stream_name[stream.first] << "]:" << _enable[stream]);
     }
@@ -1142,13 +1148,13 @@ void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync
         auto stream = frame.get_profile().stream_type();
         auto stream_index = (stream == GYRO.first)?GYRO:ACCEL;
 
-        bool placeholder_false(false);
         double elapsed_camera_ms;
         seq += 1;
         if(DKMS || DKMS_DEBUG)
         {
             double frame_time = frame.get_timestamp();
 
+            bool placeholder_false(false);
             if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
             {
                 setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
@@ -1158,13 +1164,16 @@ void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync
         }
         if(!DKMS || DKMS_DEBUG)
         {
+
+            bool placeholder_false(false);
             if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
             {
               setBaseTime(0, false);
             }
 
             double elapsed_ros_ms = (ros::Time::now() - _ros_time_base).toSec();
-            ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", elapsed_ros_ms - elapsed_camera_ms);
+            if(DKMS_DEBUG)
+                ROS_INFO("IMU OFF BY: %f", (elapsed_ros_ms - elapsed_camera_ms) * 1000);
             //I am fairly certain elapsed_camera_ms is in seconds and not ms.
             elapsed_camera_ms = elapsed_ros_ms;
         }
@@ -1227,10 +1236,10 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
     double elapsed_camera_ms;
     ros::Time t;
 
-    bool placeholder_false(false);
     if(DKMS || DKMS_DEBUG)
     {
         double frame_time = frame.get_timestamp();
+        bool placeholder_false(false);
         if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
         {
             setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
@@ -1250,6 +1259,7 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
     }
     if(!DKMS || DKMS_DEBUG)
     {
+        bool placeholder_false(false);
         if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
         {
           setBaseTime(0, false);
@@ -1258,7 +1268,8 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
             0 != _imu_publishers[stream_index].getNumSubscribers())
           {
             double elapsed_ros_ms = (ros::Time::now() - _ros_time_base).toSec();
-            ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", elapsed_ros_ms - elapsed_camera_ms);
+            if(DKMS_DEBUG)
+                ROS_INFO("IMU OFF BY: %f", (elapsed_ros_ms - elapsed_camera_ms) * 1000);
             //I am fairly certain elapsed_camera_ms is in seconds and not ms.
             elapsed_camera_ms = elapsed_ros_ms;
             t = ros::Time(_ros_time_base.toSec() + elapsed_camera_ms);
@@ -1318,8 +1329,15 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
     }
     if(!DKMS || DKMS_DEBUG)
     {
+        bool placeholder_false(false);
+        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+        {
+          setBaseTime(0,true);
+        }
+
         double elapsed_ros_ms = (ros::Time::now() - _ros_time_base).toSec();
-        ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", elapsed_ros_ms - elapsed_camera_ms);
+        if(DKMS_DEBUG)
+            ROS_INFO("POSE OFF BY: %f", (elapsed_ros_ms - elapsed_camera_ms)*1000);
         //I am fairly certain elapsed_camera_ms is in seconds and not ms.
         elapsed_camera_ms = elapsed_ros_ms;
     }
@@ -1431,9 +1449,14 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         }
         if(!DKMS || DKMS_DEBUG)
         {
-
-          ROS_INFO_COND(DKMS_DEBUG, "OFF BY: %f", (ros::Time::now() - t).toSec());
-          t = ros::Time::now();
+            bool placeholder_false(false);
+            if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+            {
+              setBaseTime(0, true);
+            }
+            if(DKMS_DEBUG)
+                ROS_INFO("FRAME OFF BY: %f", (ros::Time::now() - t).toSec() * 1000);
+            t = ros::Time::now();
         }
 
         if (frame.is<rs2::frameset>())
