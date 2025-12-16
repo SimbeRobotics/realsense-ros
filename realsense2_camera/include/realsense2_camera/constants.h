@@ -40,7 +40,7 @@ namespace realsense2_camera
     const uint16_t RS_L515_PID_PRE_PRQ = 0x0B3D; // 
     const uint16_t RS_L515_PID      = 0x0B64; // 
     const uint16_t RS_L535_PID      = 0x0b68;
-    
+    const uint16_t RS421_PID        = 0x1155;
 
     const bool ALIGN_DEPTH             = false;
     const bool POINTCLOUD              = false;
