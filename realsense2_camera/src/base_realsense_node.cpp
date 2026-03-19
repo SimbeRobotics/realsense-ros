@@ -1819,6 +1819,7 @@ double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame)
         double elapsed_camera_ms = (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / 1000.0;
         if (_ros_time_base.toSec() + elapsed_camera_ms < _ros_time_base.toSec())
         {
+            ROS_WARN("Camera timestamp seems to have reset. Resetting ROS time base.");
             _ros_time_base = ros::Time::now();
             _camera_time_base = frame.get_timestamp();
             elapsed_camera_ms = (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / 1000.0;
