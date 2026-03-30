@@ -872,6 +872,7 @@ void BaseRealSenseNode::setupDevice()
         std::function<void(rs2::frame)> frame_callback_function, imu_callback_function;
         if (_sync_frames)
         {
+            ROS_INFO("Syncing frames is enabled");
             frame_callback_function = _syncer;
 
             auto frame_callback_inner = [this](rs2::frame frame){
