@@ -1808,6 +1808,7 @@ bool BaseRealSenseNode::setBaseTime(double frame_time, rs2_timestamp_domain time
         _ros_time_base = ros::Time::now();
         _camera_time_base = frame_time;
         _previous_frame_time = frame_time;
+        ROS_LOG("ros time base: %f ; camera time base: %f", _ros_time_base.toSec(), _camera_time_base);
         return true;
     }
     return false;
@@ -1822,6 +1823,7 @@ double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame)
             ROS_WARN("Hardware clock reset detected. Resetting ROS time base.");
             _ros_time_base = ros::Time::now();
             _camera_time_base = frame.get_timestamp();
+            ROS_INFO("ros time base: %f ; camera time base: %f", _ros_time_base.toSec(), _camera_time_base);
         }
         _previous_frame_time = frame.get_timestamp();
 
