@@ -1828,6 +1828,7 @@ double BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame)
         _previous_frame_time = frame.get_timestamp();
 
         double elapsed_camera_ms = (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / 1000.0;
+        ROS_INFO_THROTTLE(10, "frame system time timestamp: %f", (_ros_time_base.toSec() + elapsed_camera_ms));
         return (_ros_time_base.toSec() + elapsed_camera_ms);
     }
     else
